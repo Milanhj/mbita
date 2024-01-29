@@ -1,0 +1,703 @@
+---
+title: "Fine-scale heterogeneity in Schistosoma mansoni force of infection measured through antibody response"
+subtitle: "Figure 4a, Figure 4b, Figure S6 seroprevalence and force of infection by distance from Lake Victoria, and age distribution summary"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "run `r Sys.time()`"
+output:
+  html_document:
+    highlight: haddock
+    theme: default
+    code_folding: hide
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+
+# Preamble
+```{r preamble}
+library(here)
+here()
+#--------------------------------
+# source the configuration file
+#--------------------------------
+source(here("R/mbita-schisto-Config.R"))
+
+#--------------------------------
+# source the shared functions file
+#--------------------------------
+source(here("R/mbita-schisto-Functions.R"))
+
+```
+
+
+
+# Load Mbita Kenya antibody measurements and other data
+
+These data include measurements from pre-school aged children in 30 villages near Homa Bay and Mbita in Western Kenya. This article summarizes the study design and field methods:
+
+Won KY, Kanyi HM, Mwende FM, Wiegand RE, Brook Goodhew E, Priest JW, et al. Multiplex Serologic Assessment of Schistosomiasis in Western Kenya: Antibody Responses in Preschool Age Children as a Measure of Reduced Transmission. _Am J Trop Med Hyg._ 2017; 16–0665. https://www.ncbi.nlm.nih.gov/pubmed/28719280
+
+```{r load data, warning=FALSE}
+#-----------------------------------
+# load the child antibody and 
+# kato-katz measurements
+#-----------------------------------
+d <- readRDS(here("data","mbita_schisto.rds")) %>%
+  mutate(vid=factor(vid))
+
+#-----------------------------------
+# load the village-level spatial
+# covariate data, created with
+# mbita-schisto-map.Rmd
+#
+# note: for public-facing workflow
+# this file does not include village 
+# lon/lat to protect participant
+# confidentiality
+#-----------------------------------
+d_spatial <- readRDS(here("data","mbita_spatial.rds")) %>%
+  mutate(vid=factor(vid))
+
+d2 <- d %>%
+  left_join(d_spatial,by="vid")
+
+# create age strata
+# create log values for SEA MFI and KK epg
+# convert the dist_victoria variable from class units to numeric
+# add a dummy variable for modeling
+d2 <- d2 %>%
+  mutate(agecat = cut(agey,breaks=c(0,1,2,3,4,6),
+                      labels=c("<1 year","1 year","2 years","3 years","4 years")),
+         logsea = log10(sea),
+         logepg = log10(sm_epg),
+         dist_victoria = as.numeric(dist_victoria),
+         dummy=1
+         )
+
+#-----------------------------------
+# load village-level FOI estimates
+# estimated in the notebook
+# mbita-schisto-SEA-vs_KK.Rmd
+#-----------------------------------
+d_foi <- readRDS(here("data","mbita-village-foi.rds")) %>%
+  rename(lambda = mufoi, lambda_se = mufoi_se, lambda_lb = mufoi_lb, lambda_ub = mufoi_ub) %>%
+  mutate(vid = factor(vid))
+
+#-----------------------------------
+# create a village-level summary
+# dataset of spatial covariates,
+# prevalence, and FOI for making figures
+#-----------------------------------
+dvil <- d2 %>%
+  group_by(vid, arm) %>%
+  summarize(sea_n = sum(sea_pos,na.rm=T),
+            sea_N = sum(ifelse(!is.na(sea_pos),1,0)),
+            kk_n = sum(kk_pos,na.rm=T),
+            kk_N = sum(ifelse(!is.na(kk_pos),1,0)),
+            .groups = "keep"
+            ) %>%
+  mutate(sea_prev = sea_n/sea_N,
+         kk_prev = kk_n/kk_N)
+
+# estimate exact binomial CIs for prevalence
+dvil <- dvil %>% 
+    rowwise() %>% 
+    mutate(sea_CI = list(enframe(binom.test(x=sea_n, n=sea_N, alternative =  "two.sided", conf.level = 0.95)$conf.int))) %>% 
+    unnest(sea_CI) %>% 
+    spread(name, value) %>% 
+    rename("sea_prev_lb" = "1", "sea_prev_ub" = "2")
+dvil <- dvil %>% 
+    rowwise() %>% 
+    mutate(kk_CI = list(enframe(binom.test(x=kk_n, n=kk_N, alternative =  "two.sided", conf.level = 0.95)$conf.int))) %>% 
+    unnest(kk_CI) %>% 
+    spread(name, value) %>% 
+    rename("kk_prev_lb" = "1", "kk_prev_ub" = "2")
+  
+# join FOI estimates
+dvil2 <- left_join(dvil,d_foi,by="vid")
+
+# join spatial covariates
+dvil3 <- left_join(dvil2,d_spatial,by="vid") %>%
+  mutate(dist_victoria = as.numeric(dist_victoria))
+
+
+```
+
+# Assess whether age-standarization is necessary
+
+Age is strongly related to both SEA seroprevalence and Kato-Katz prevalence.  If age distributions differ across villages, then that could lead to confounding when assessing the relationships between village-level prevalence and other exposures, like distance to the lake Estimate a binomial generalized additive model that includes a cubic spline for child age and village-level random effects. Estimate predicted prevalence in each village, marginally standardized to the age distribution of the entire study population.
+
+```{r age adjusted prevalence}
+#------------------------------
+# estimate GAM models for SEA 
+# and Kato-Katz prevalence
+#------------------------------
+seafit <- gam(sea_pos ~ s(agey, bs="cr") + s(vid, bs = "re"), data = d2, family = "binomial")
+kkfit <- gam(kk_pos ~ s(agey, bs="cr") + s(vid, bs = "re"), data = d2, family = "binomial")
+
+#------------------------------
+# create a new dataset that 
+# reflects the overall age distribution
+# and predict prevalence for each village
+#------------------------------
+d_agest <- foreach(vidi = levels(d2$vid), .combine = rbind) %do% {
+  di <- d2 %>% mutate(vid = vidi)
+  di$sea_pred = predict(seafit, newdata = di, type = "response")
+  di$kk_pred = predict(kkfit, newdata = di, type = "response")
+  di
+}
+d_agest <- d_agest %>%
+  mutate(vid = factor(vid,levels=levels(dvil2$vid)),
+         vidf = paste0("community ",vid),
+         vidf = factor(vidf, levels = paste0("community ",levels(dvil2$vid))))
+#------------------------------
+# estimate village-level
+# age-standardized prevalence
+# (marginal standardization)
+#------------------------------
+dvil_std <- d_agest %>%
+  group_by(vid) %>%
+  summarize(sea_prev_gam = mean(sea_pred),
+            kk_prev_gam = mean(kk_pred),
+            .groups = "keep"
+            ) 
+
+#------------------------------
+# merge to the unstandardized
+# estimates
+#------------------------------
+dvil_std2 <- left_join(dvil, dvil_std, by = "vid")
+
+```
+
+## Figure S6
+
+Compare unadjusted and age-adjusted prevalence estimates
+
+```{r plot unadj and adj prev}
+#--------------------------------
+# plot unadjusted versus
+# age standardized prevalence
+# in the 30 villages
+#--------------------------------
+
+#--------------------------------
+# SEA
+#--------------------------------
+plot_unadj_adj_sea <- ggplot(data = dvil_std2, aes(x = sea_prev, y = sea_prev_gam)) + 
+  geom_abline(intercept = 0, slope = 1, color = "gray60") +
+  geom_point(alpha = 0.7, color = vircols[3]) +
+  scale_x_continuous(breaks = seq(0,1,by=0.2), labels = sprintf("%1.0f",seq(0,1,by=0.2)*100)) +
+  scale_y_continuous(breaks = seq(0,1,by=0.2), labels = sprintf("%1.0f",seq(0,1,by=0.2)*100)) +
+  labs(x = "Unadjusted SEA seroprevalence (%)", y = "Age standardized SEA seroprevalence (%)", tag = "B") +
+  coord_cartesian(xlim = c(0,1),ylim = c(0,1))
+
+
+#--------------------------------
+# Kato-Katz
+#--------------------------------
+plot_unadj_adj_kk <- ggplot(data = dvil_std2, aes(x = kk_prev, y = kk_prev_gam)) + 
+  geom_abline(intercept = 0, slope = 1, color = "gray60") +
+  geom_point(alpha = 0.7, color = vircols[3]) +
+  scale_x_continuous(breaks = seq(0,1,by=0.2), labels = sprintf("%1.0f",seq(0,1,by=0.2)*100)) +
+  scale_y_continuous(breaks = seq(0,1,by=0.2), labels = sprintf("%1.0f",seq(0,1,by=0.2)*100)) +
+  labs(x = "Unadjusted Kato-Katz prevalence (%)", y = "Age standardized Kato-Katz prevalence (%)", tag = "C") +
+  coord_cartesian(xlim = c(0,1),ylim = c(0,1)) 
+
+```
+
+Age is not a village-level confounder in this study so ignore it in the analyses below to simplify the estimation process. This is consistent with very similar age distributions across the 30 villages:
+
+```{r plot age distributions by village, fig.width=10, fig.height=10}
+d2_plot <- d2 %>%
+  mutate(vidf = paste0("community ",vid),
+         vidf = factor(vidf, levels = paste0("community ",levels(dvil2$vid))))
+
+plot_age_distributions <- ggplot(data = d2_plot, aes(x = agey)) +
+  facet_wrap(~vidf,nrow=6,ncol=5)+
+  geom_line(stat = "density", color = vircols[3],lwd=1) +
+  geom_rug(color = vircols[3],alpha = 0.2, sides = "b") +
+  geom_density(data = d_agest,color = "gray20", lwd=0.3) +
+  # geom_line(data = d_agest, stat = "density", color = "gray50", lwd=0.2) +
+  labs(x = "age, years", title = "community age distributions", tag = "A")
+
+```
+
+```{r age distribution composite figure, fig.height=10, fig.width=10}
+
+age_plot_composite <- grid.arrange(plot_age_distributions,
+                                   plot_unadj_adj_sea,
+                                   plot_unadj_adj_kk,
+                                   layout_matrix = matrix(c(1,2,1,3), nrow=2),
+                                   nrow = 2, ncol = 2,
+                                   heights = c(10,6), 
+                                   widths = c(4,4)
+                                   )
+
+# save png file
+ggsave(filename=here("output","mbita-age-distributions.png"),plot=age_plot_composite,device="png",width=8,height=10)
+
+```
+
+
+# Village-level seroprevalence and FOI versus distance from the lake
+
+## Fit models of prevalence by distance
+
+Estimate seroprevalence as a function of distance from Lake Victoria using a semi-parametric spline
+
+```{r seroprevalence vs dist}
+#-----------------------------
+# spline model of SEA seroprevalence
+# by distance from the lake
+# 
+# include village-level random
+# effects to account for within-
+# village correlation
+#
+# limit predictions to within
+# 4km of the lake to reduce
+# edge effects from the single
+# village that is beyond
+#-----------------------------
+
+fit_sea_dist <- mgcv::gam(sea_pos~s(dist_victoria,bs="cr",k=4) +  s(vid,bs="re",by=dummy),
+                          family="binomial",
+                          data=d2)
+
+newd <- d2 %>%  
+  group_by(vid) %>%
+  filter(dist_victoria < 4000) %>%
+  slice(1) %>%
+  mutate(dummy=0)
+fit_sea_dist_ci <- gamCI(m=fit_sea_dist,newdata=newd,nreps=10000)
+
+# convert linear predictor to prevalance 
+# (note: expitfn() is in shared functions, source above)
+fit_sea_dist_ci <- fit_sea_dist_ci %>%
+  mutate(fit = expitfn(fit),
+         uprP = expitfn(uprP),
+         lwrP = expitfn(lwrP),
+         uprS = expitfn(uprS),
+         lwrS = expitfn(lwrS),
+         )
+
+```
+
+Estimate Kato-Katz prevalence as a function of distance from Lake Victoria using a semi-parametric spline
+
+```{r kk prevalence vs dist}
+#-----------------------------
+# spline model of SEA seroprevalence
+# by distance from the lake
+#-----------------------------
+
+fit_kk_dist <- mgcv::gam(kk_pos~s(dist_victoria,bs="cr",k=4) + s(vid,bs="re",by=dummy), 
+                         family="binomial",
+                         data=d2)
+
+newd <- d2 %>% 
+  group_by(vid) %>%
+  slice(1) %>%
+  mutate(dummy=0)
+fit_kk_dist_ci <- gamCI(m=fit_kk_dist,newdata=newd,nreps=10000)
+
+# convert linear predictor to prevalance 
+# (note: expitfn() is in shared functions, source above)
+fit_kk_dist_ci <- fit_kk_dist_ci %>%
+  mutate(fit = expitfn(fit),
+         uprP = expitfn(uprP),
+         lwrP = expitfn(lwrP),
+         uprS = expitfn(uprS),
+         lwrS = expitfn(lwrS),
+         )
+```
+
+Past studies have suggested that many of the highest infection communities are on Rusinga island. Include a random effect for Rusinga island to assess whether the SEA-distance relationship is still statistically significant.
+
+```{r sea and kk prevalence vs dist with island re}
+d2 <- d2 %>%
+  mutate(rusinga = ifelse(vid %in% c("1","2","3","4","5","8","10","11","15","16","26"),"Yes","No"),
+         rusinga = factor(rusinga)
+         )
+
+# SEA by distance
+fit_sea_dist_island <- mgcv::gam(sea_pos~s(dist_victoria,bs="cr",k=4) +  s(vid,bs="re",by=dummy) + s(rusinga, bs = "re", by = dummy),
+                          family="binomial",
+                          data=d2)
+summary(fit_sea_dist_island)
+# compare AIC and BIC with model that excludes island RE
+AIC(fit_sea_dist_island,fit_sea_dist)
+BIC(fit_sea_dist_island,fit_sea_dist)
+
+
+```
+
+## KK prevalence vs. distance
+
+```{r KK prev vs distance fig}
+#-----------------------------
+# KK prevalence by distance
+#-----------------------------
+pkkdist <- ggplot(data=fit_kk_dist_ci,aes(x=dist_victoria/1000)) +
+  geom_line(aes(y=fit), color="gray40",lwd=0.3) +
+  # geom_ribbon(aes(ymin=lwrS,ymax=uprS),alpha=0.1,color=NA,fill="black") +
+  geom_errorbar(data=dvil3, aes(x=dist_victoria/1000, ymin= kk_prev_lb, ymax = kk_prev_ub), width=0,color=vircols[3],alpha=0.7) +
+  geom_point(data=dvil3,aes(x=dist_victoria/1000,y=kk_prev),alpha=1,color=vircols[3]) +
+  scale_y_continuous(breaks=seq(0,1,by=0.2),labels=sprintf("%1.0f",seq(0,1,by=0.2)*100))+
+  scale_x_continuous(breaks=0:5)+
+  # scale_color_manual(values=pcols)+
+  coord_cartesian(ylim=c(0,0.6),xlim=c(0,5)) +
+  labs(x="distance from lake Victoria (km)",y="community prevalence (%)") +
+  theme_minimal() +
+  theme(legend.position="none")
+pkkdist
+
+```
+
+## Fig 4a SEA seroprevalence vs. distance
+```{r SEA seroprev vs distance fig}
+#-----------------------------
+# SEA seroprevalence by distance
+#
+# color village points by <1500
+# and >1500m from the lake
+# to match age-stratified
+# curve figure aesthetics
+#-----------------------------
+pspdist <- ggplot(data=fit_sea_dist_ci,aes(x=dist_victoria/1000)) +
+  # approximate simultaneous confidence interval for the spline fit
+  geom_ribbon(aes(ymin=lwrS,ymax=uprS),alpha=0.1,color=NA,fill="black") +
+  # spline fit
+  geom_line(aes(y=fit), color="gray40",lwd=0.3) +
+  # village means, <1500 m
+  geom_errorbar(data=filter(dvil3,dist_victoria<1500), aes(x= dist_victoria/1000, ymin = sea_prev_lb, ymax = sea_prev_ub), width = 0, alpha=0.8, color = cbPalette[2])+
+  geom_point(data=filter(dvil3,dist_victoria<1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 1, pch=21, bg="white", color = cbPalette[2], size = 1.75)+
+  geom_point(data=filter(dvil3,dist_victoria<1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 0.8, pch=19, bg=cbPalette[7], color = cbPalette[2], size = 1.75)+
+  # village means, >1500 m
+  geom_errorbar(data=filter(dvil3,dist_victoria>=1500), aes(x= dist_victoria/1000, ymin = sea_prev_lb, ymax = sea_prev_ub), width = 0, alpha=0.8,color = vircols[3])+
+  geom_point(data=filter(dvil3,dist_victoria>=1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 1, pch=21, bg="white", color = vircols[3], size = 1.75)+
+  geom_point(data=filter(dvil3,dist_victoria>=1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 0.8, pch=19, bg=vircols[3], color = vircols[3], size = 1.75)+
+  scale_y_continuous(breaks=seq(0,1,by=0.2),labels=sprintf("%1.0f",seq(0,1,by=0.2)*100))+
+  scale_x_continuous(breaks=0:5)+
+  # scale_color_manual(values=pcols)+
+  coord_cartesian(ylim=c(0,1),xlim=c(0,5)) +
+  labs(x=NULL,y="community seroprevalence (%)", tag = "A") +
+  theme_minimal() +
+  theme(legend.position="none")
+pspdist
+```
+
+Repeat without the spline fit and 95% CI (too busy, competing 95% CIs for village- vs overall)
+
+```{r SEA seroprev vs distance fig2}
+#-----------------------------
+# SEA seroprevalence by distance
+#
+# color village points by <1500
+# and >1500m from the lake
+# to match age-stratified
+# curve figure aesthetics
+#-----------------------------
+pspdist <- ggplot(data=fit_sea_dist_ci,aes(x=dist_victoria/1000)) +
+  # approximate simultaneous confidence interval for the spline fit
+  # geom_ribbon(aes(ymin=lwrS,ymax=uprS),alpha=0.1,color=NA,fill="black") +
+  # spline fit
+  # geom_line(aes(y=fit), color="gray40",lwd=0.3) +
+  # village means, <1500 m
+  geom_errorbar(data=filter(dvil3,dist_victoria<1500), aes(x= dist_victoria/1000, ymin = sea_prev_lb, ymax = sea_prev_ub), width = 0, alpha=0.8, color = cbPalette[2])+
+  geom_point(data=filter(dvil3,dist_victoria<1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 1, pch=21, bg="white", color = cbPalette[2], size = 1.75)+
+  geom_point(data=filter(dvil3,dist_victoria<1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 0.8, pch=19, bg=cbPalette[7], color = cbPalette[2], size = 1.75)+
+  # village means, >1500 m
+  geom_errorbar(data=filter(dvil3,dist_victoria>=1500), aes(x= dist_victoria/1000, ymin = sea_prev_lb, ymax = sea_prev_ub), width = 0, alpha=0.8,color = vircols[3])+
+  geom_point(data=filter(dvil3,dist_victoria>=1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 1, pch=21, bg="white", color = vircols[3], size = 1.75)+
+  geom_point(data=filter(dvil3,dist_victoria>=1500),aes(x= dist_victoria/1000, y = sea_prev), alpha = 0.8, pch=19, bg=vircols[3], color = vircols[3], size = 1.75)+
+  scale_y_continuous(breaks=seq(0,1,by=0.2),labels=sprintf("%1.0f",seq(0,1,by=0.2)*100))+
+  scale_x_continuous(breaks=0:5)+
+  # scale_color_manual(values=pcols)+
+  coord_cartesian(ylim=c(0,1),xlim=c(0,5)) +
+  labs(x=NULL,y="community seroprevalence (%)", tag = "A") +
+  theme_minimal() +
+  theme(legend.position="none")
+pspdist
+```
+
+## Fig 4b SEA FOI vs. distance
+```{r SEA FOI vs distance fig}
+#-----------------------------
+# FOI measured by SEA seroconversion over by distance
+#-----------------------------
+pfoidist <- ggplot(data=dvil3,aes(x=dist_victoria/1000,y=lambda,ymin=lambda_lb,ymax=lambda_ub)) +
+  # village mean FOI for villages <1500m
+  geom_errorbar(data=filter(dvil3,dist_victoria<1500),alpha=0.8,color = cbPalette[2])+
+  geom_point(data=filter(dvil3,dist_victoria<1500),alpha = 1, pch=21, bg="white", color = cbPalette[2], size = 1.75)+
+  geom_point(data=filter(dvil3,dist_victoria<1500),alpha = 0.8, pch=19, bg=cbPalette[2], color = cbPalette[2], size = 1.75)+
+  # village mean FOI for villages >1500m
+  geom_errorbar(data=filter(dvil3,dist_victoria>=1500),width = 0, alpha=0.8,color = vircols[3])+
+  geom_point(data=filter(dvil3,dist_victoria>=1500),alpha = 1, pch=21, bg="white", color = vircols[3], size = 1.75)+
+  geom_point(data=filter(dvil3,dist_victoria>=1500),alpha = 0.8, pch=19, bg=vircols[3], color = vircols[3], size = 1.75)+
+  scale_y_continuous(breaks=seq(0,1,by=0.2))+
+  scale_x_continuous(breaks=0:5)+
+  # scale_color_manual(values=pcols)+
+  coord_cartesian(ylim=c(0,1),xlim=c(0,5)) +
+  labs(x="distance from Lake Victoria (km)",y=expression(paste("community force of infection (",lambda,")")), tag = "B") +
+  theme_minimal() +
+  theme(legend.position="none")
+pfoidist
+
+```
+
+## Composite Fig 4a 4b
+
+Create a composite figure for 4a and 4b
+```{r comp figure for SEA, fig.width=6, fig.height = 8}
+
+comp_sea_dist <- grid.arrange(pspdist,pfoidist,nrow = 2, ncol = 1)
+
+# save png file
+ggsave(filename=here("output","mbita-SEA-v-dist.png"),plot=comp_sea_dist,device="png",width=3.42,height=6)
+
+# save pdf file
+ggsave(filename=here("output","mbita-SEA-v-dist.pdf"),plot=comp_sea_dist,device="pdf",width=3.42,height=6)
+
+```
+
+
+# Repeat figures, colored by intervention arm
+
+Repeat the figures above, coloring the points by intervention arm to ensure the patterns are not driven by community-level versus school-based praziquantle distribution
+
+```{r KK prev vs distance colored by arm fig}
+#-----------------------------
+# KK prevalence by distance
+# points colored by intervention arm
+#-----------------------------
+pkkdist2 <- ggplot(data=fit_kk_dist_ci,aes(x=dist_victoria/1000,color=arm)) +
+  geom_point(data=dvil3,aes(x=dist_victoria/1000,y=kk_prev),alpha=0.9) +
+  geom_line(aes(y=fit), color="gray40",lwd=0.3) +
+  # geom_ribbon(aes(ymin=lwrP,ymax=uprP),alpha=0.1,color=NA,fill="black") +
+  # geom_ribbon(aes(ymin=lwrS,ymax=uprS),alpha=0.1,color=NA,fill="black") +
+  scale_y_continuous(breaks=seq(0,1,by=0.2),labels=sprintf("%1.0f",seq(0,1,by=0.2)*100))+
+  scale_x_continuous(breaks=0:5)+
+  scale_color_manual(values=cbPalette[c(4,8)])+
+  coord_cartesian(ylim=c(0,0.9),xlim=c(0,3.5)) +
+  labs(x="distance from lake Victoria (km)",y="community prevalence (%)") +
+  theme_minimal() +
+  theme(legend.position="right")
+pkkdist2
+```
+
+```{r SEA seroprev vs distance colored by arm fig}
+#-----------------------------
+# SEA seroprevalence by distance
+# points colored by intervention arm
+#-----------------------------
+pspdist2 <- ggplot(data=fit_sea_dist_ci,aes(x=dist_victoria/1000,color=arm)) +
+  geom_point(data=dvil3,aes(x=dist_victoria/1000,y=sea_prev),alpha=0.9) +
+  geom_line(aes(y=fit), color="gray40",lwd=0.3) +
+  # geom_ribbon(aes(ymin=lwrP,ymax=uprP),alpha=0.1,color=NA,fill="black") +
+  # geom_ribbon(aes(ymin=lwrS,ymax=uprS),alpha=0.1,color=NA,fill="black") +
+  scale_y_continuous(breaks=seq(0,1,by=0.2),labels=sprintf("%1.0f",seq(0,1,by=0.2)*100))+
+  scale_x_continuous(breaks=0:5)+
+  scale_color_manual(values=cbPalette[c(4,8)])+
+  coord_cartesian(ylim=c(0,0.9),xlim=c(0,3.5)) +
+  labs(x="distance from lake Victoria (km)",y="community seroprevalence (%)") +
+  theme_minimal() +
+  theme(legend.position="right")
+pspdist2
+```
+
+
+```{r SEA FOI vs distance colored by arm fig}
+#-----------------------------
+# FOI measured by SEA seroconversion over by distance
+# points colored by intervention arm
+#-----------------------------
+pfoidist2 <- ggplot(data=dvil3,aes(x=dist_victoria/1000,y=lambda,color=arm)) +
+  geom_point(alpha=0.9) +
+  scale_y_continuous(breaks=seq(0,0.6,by=0.1))+
+  scale_x_continuous(breaks=0:5)+
+  scale_color_manual(values=cbPalette[c(4,8)])+
+  coord_cartesian(ylim=c(0,0.65),xlim=c(0,3.5)) +
+  labs(x="distance from lake Victoria (km)",y=expression(paste("seroconversion rate per year (",lambda,")"))) +
+  theme_minimal() +
+  theme(legend.position="right")
+pfoidist2
+```
+
+# Cumulative cases identified by distance from the lake
+
+Summarize the cumulative number of Kato-Katz positive infections and seropositive children by distance to Lake Victoria.
+
+Note that these curves are influenced by different village sizes, and are not normalized to remove the influence of village size.
+
+They do provide estimates, within this study, of the proportion of infected children identified with different distances from the lake.  
+
+As a comparison, we also estimated the proportion of positivies identified by ranking villages by cases and by prevalence, which provide an upper bound of the optimal ranking of villages to identify infected children.
+
+
+
+```{r cumulative kk cases by distance}
+dkkcum <- dvil3 %>%
+  dplyr::select(vid, dist_victoria, kk_N, kk_n, kk_prev) %>%
+  ungroup()
+
+dkkdist <- dkkcum %>%
+  arrange(dist_victoria) %>%
+  mutate(vil_rank = row_number(),
+         n_tot = sum(kk_n),
+         n_cum = cumsum(kk_n),
+         p_cum = n_cum / n_tot,
+         sorted = "distance") %>%
+  dplyr::select(sorted,vid,dist_victoria,kk_prev,vil_rank,n_cum,p_cum)
+
+dkkprev <- dkkcum %>%
+  arrange(-kk_prev) %>%
+  mutate(vil_rank = row_number(),
+         n_tot = sum(kk_n),
+         n_cum = cumsum(kk_n),
+         p_cum = n_cum / n_tot,
+         sorted = "prevalence") %>%
+  dplyr::select(sorted,vid,dist_victoria,kk_prev,vil_rank,n_cum,p_cum)
+
+dkkcumd <- bind_rows(dkkdist,dkkprev) %>%
+  mutate(sorted = factor(sorted,levels = c("prevalence", "distance")),
+         outcome = "Kato-Katz"
+         )
+
+dkkn <- dkkcum %>%
+  arrange(-kk_n) %>%
+  mutate(vil_rank = row_number(),
+         n_tot = sum(kk_n),
+         n_cum = cumsum(kk_n),
+         p_cum = n_cum / n_tot,
+         sorted = "cases") %>%
+  dplyr::select(sorted,vid,dist_victoria,kk_prev,vil_rank,n_cum,p_cum)
+
+dkkcumd <- bind_rows(dkkdist,dkkprev,dkkn) %>%
+  mutate(sorted = factor(sorted,levels = c("cases","prevalence", "distance")),
+         outcome = "Kato-Katz"
+         )
+
+```
+
+
+```{r cumulative sea positive by distance}
+dseacum <- dvil3 %>%
+  dplyr::select(vid, dist_victoria, sea_N, sea_n, sea_prev) %>%
+  ungroup()
+
+dseadist <- dseacum %>%
+  arrange(dist_victoria) %>%
+  mutate(vil_rank = row_number(),
+         n_tot = sum(sea_n),
+         n_cum = cumsum(sea_n),
+         p_cum = n_cum / n_tot,
+         sorted = "distance") %>%
+  dplyr::select(sorted,vid,dist_victoria,sea_prev,vil_rank,n_cum,p_cum)
+
+dseaprev <- dseacum %>%
+  arrange(-sea_prev) %>%
+  mutate(vil_rank = row_number(),
+         n_tot = sum(sea_n),
+         n_cum = cumsum(sea_n),
+         p_cum = n_cum / n_tot,
+         sorted = "prevalence") %>%
+  dplyr::select(sorted,vid,dist_victoria,sea_prev,vil_rank,n_cum,p_cum)
+
+dsean <- dseacum %>%
+  arrange(-sea_n) %>%
+  mutate(vil_rank = row_number(),
+         n_tot = sum(sea_n),
+         n_cum = cumsum(sea_n),
+         p_cum = n_cum / n_tot,
+         sorted = "cases") %>%
+  dplyr::select(sorted,vid,dist_victoria,sea_prev,vil_rank,n_cum,p_cum)
+
+
+dseacumd <- bind_rows(dseadist,dseaprev,dsean) %>%
+  mutate(sorted = factor(sorted,levels = c("cases","prevalence", "distance")),
+         outcome = "SEA"
+  )
+
+```
+
+```{r combine cumulative estimates}
+dcum <- bind_rows(dkkcumd, dseacumd)
+
+```
+
+
+## Figures
+
+Cumulative number of positives stratified by measure (Kato Katz, SEA)
+
+```{r cumulative cases by distance figure}
+
+pcols <- cbPalette[c(4,6,8)]
+pcumdist <- ggplot(data=dcum, aes(x = vil_rank, y = p_cum, color = sorted)) +
+  facet_grid(.~outcome) + 
+  geom_abline(intercept = 0, slope = 1/30, color = "gray40")+
+  geom_line() +
+  scale_color_manual(values = pcols, guide = guide_legend(title = "Ranking")) +
+  labs(x = "Villages ranked by cases, prevalence or distance", y = "cumulative proportion of children positive") +
+  theme(
+    legend.position = c(0.9,0.2)
+  )
+
+pcumdist
+
+```
+
+Cumulative number of positives stratified by ranking approach (cases, prevalence, distance)
+
+```{r cumulative cases by distance figure2}
+
+pcols <- cbPalette[c(7,6)]
+pcumdist2 <- ggplot(data=dcum, aes(x = vil_rank, y = p_cum, color = outcome)) +
+  facet_grid(.~sorted) + 
+  geom_abline(intercept = 0, slope = 1/30, color = "gray40")+
+  geom_line() + 
+  scale_color_manual(values = pcols, guide = guide_legend(title = "Measure")) +
+  labs(x = "Villages ranked by cases, prevalence or distance", y = "cumulative proportion of children positive") +
+  theme(
+    legend.position = c(0.9,0.2)
+  )
+
+pcumdist2
+
+```
+
+## Print estimates for reporting in the manuscript
+
+```{r cumulative case table kk}
+cum_kk_tab <- dcum %>% 
+  filter(outcome=="Kato-Katz" & sorted == "distance") %>% 
+  dplyr::select(vil_rank,dist_victoria,kk_prev,n_cum,p_cum)
+
+
+knitr::kable(cum_kk_tab,digits = 3) %>%
+  kable_styling(bootstrap_options = "striped")
+
+```
+
+
+```{r cumulative case table sea}
+cum_sea_tab <- dcum %>% 
+  filter(outcome=="SEA" & sorted == "distance") %>% 
+  dplyr::select(vil_rank,dist_victoria,sea_prev,n_cum,p_cum)
+
+knitr::kable(cum_sea_tab,digits = 3) %>%
+  kable_styling(bootstrap_options = "striped")
+
+```
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
+
+

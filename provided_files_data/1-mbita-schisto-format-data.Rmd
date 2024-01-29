@@ -1,0 +1,96 @@
+---
+title: "Fine-scale heterogeneity in Schistosoma mansoni force of infection measured through antibody response"
+subtitle: "Data processing script"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "run `r Sys.time()`"
+output:
+  html_document:
+    highlight: haddock
+    theme: default
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+
+# Preamble
+```{r preamble}
+library(here)
+here()
+#--------------------------------
+# source the configuration file
+#--------------------------------
+source(here("R/mbita-schisto-Config.R"))
+```
+
+
+
+# Load Mbita Kenya antibody measurements
+
+These data include measurements from pre-school aged children in 30 villages near Homa Bay and Mbita in Western Kenya. This article summarizes the study design and field methods:
+
+Won KY, Kanyi HM, Mwende FM, Wiegand RE, Brook Goodhew E, Priest JW, et al. Multiplex Serologic Assessment of Schistosomiasis in Western Kenya: Antibody Responses in Preschool Age Children as a Measure of Reduced Transmission. _Am J Trop Med Hyg._ 2017; 16–0665. https://www.ncbi.nlm.nih.gov/pubmed/28719280
+
+The script below loads the full dataset, limits it to variables relevant to the present analysis for public distribution, and stores village latitude and longitude in a separate file (not publicly shared) to protect participant confidentiality.
+
+NOTE: This script is provided for completness but cannot be run publicly because the raw, underlying data are not available.
+
+```{r load data}
+#---------------------------
+# Load the data
+#---------------------------
+d <- readRDS(here("data","mbita_psac.rds"))
+
+d2 <- d %>%
+  dplyr::select(year,vid,arm,pid,agey,sex,sea,sm25,sm_epg)
+
+#---------------------------
+# strip real ID info
+#---------------------------
+d2 <- d2 %>%
+  mutate(pid = row_number(),
+         pid = as.character(pid))
+
+
+#---------------------------
+# identify seropositive by
+# SEA and Sm25 using ROC cutoff
+# these cutoffs were provided
+# by Kim Won in the file
+# Mbita cutoff table for Ben.xlsx
+#---------------------------
+d2 <- d2 %>%
+  mutate(
+    arm = factor(arm, levels=c("CWT","SBT")),
+    sea_pos = ifelse(sea>965,1,0),
+    sm25_pos = ifelse(sm25>38,1,0),
+    kk_pos = ifelse(sm_epg>0,1,0)
+  )
+
+
+d_lonlat <- d %>%
+  dplyr::select(vid,lon,lat) %>%
+  group_by(vid) %>%
+  slice(1)
+
+# save RDS files
+saveRDS(d2,file=here("data","mbita_schisto.rds"))
+saveRDS(d_lonlat,file=here("data","mbita_lonlat.rds"))
+
+# save CSV files
+write_csv(d2,path=here("data","mbita_schisto.csv"))
+write_csv(d_lonlat,path=here("data","mbita_lonlat.csv"))
+```
+
+# Summarize data frame
+```{r summarize data}
+summary(d2)
+
+```
+
+# Session Info
+```{r session info}
+sessionInfo()
+```

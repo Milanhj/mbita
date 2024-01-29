@@ -1,0 +1,177 @@
+---
+title: "Fine-scale heterogeneity in Schistosoma mansoni force of infection measured through antibody response"
+subtitle: "Table 1, summary of samples by year and by age"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "run `r Sys.time()`"
+output: 
+  html_document:
+    highlight: haddock
+    theme: default
+    code_folding: hide
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+
+# Preamble
+```{r preamble}
+library(here)
+here()
+#--------------------------------
+# source the configuration file
+#--------------------------------
+source(here("R/mbita-schisto-Config.R"))
+```
+
+
+# Load and process data
+```{r load data,message=FALSE,warning=FALSE}
+
+
+#---------------------------
+# mbita PSAC data
+#---------------------------
+d <- readRDS(here("data","mbita_schisto.rds") )
+
+# create age strata
+# create log values for SEA MFI and KK epg
+# convert the dist_victoria variable from class units to numeric
+d2 <- d %>%
+  mutate(agecat = cut(agey,breaks=c(0,1,2,3,4,5,6),
+                      labels=c("<1 year","1 year","2 years","3 years","4 years","5 years")),
+         logsea = log10(sea),
+         logepg = log10(sm_epg)         
+         )
+
+# create factor variables for modeling (used below)
+d3 <- d2 %>% 
+  ungroup() %>%
+  mutate(vid=factor(vid),
+         dummy=1)
+
+#---------------------------
+# collapse to counts at the
+# village level, by year
+# calculate prevalence
+# by SEA and Kato-Katz
+#
+# also summarize by village
+# over all years
+#---------------------------
+
+# summarized by village and year
+dvil <- d3 %>%
+  group_by(vid,year) %>%
+  summarize(sea_n = sum(sea_pos,na.rm=T),
+            sea_N = sum(ifelse(!is.na(sea_pos),1,0)),
+            kk_n = sum(kk_pos,na.rm=T),
+            kk_N = sum(ifelse(!is.na(kk_pos),1,0)),
+            .groups = "keep"
+            ) %>%
+  mutate(sea_prev = sea_n/sea_N,
+         kk_prev = kk_n/kk_N,
+         yearf = as.factor(year))
+
+# summarized by village (over all years)
+dvil2 <- d3 %>%
+  group_by(vid) %>%
+  summarize(sea_n = sum(sea_pos,na.rm=T),
+            sea_N = sum(ifelse(!is.na(sea_pos),1,0)),
+            kk_n = sum(kk_pos,na.rm=T),
+            kk_N = sum(ifelse(!is.na(kk_pos),1,0)),
+            .groups = "keep"
+            ) %>%
+  mutate(sea_prev = sea_n/sea_N,
+         kk_prev = kk_n/kk_N)
+
+```
+
+# Table 1
+
+Summarize number of DBS and stool samples by year and by age.
+
+First, tally the number of measurements per village (summary statistics).
+
+```{r number of obs}
+#------------------------------
+# summarize number of children 
+# measured per village
+#------------------------------
+summary(as.numeric(table(d$vid)))
+
+#------------------------------
+# summarize measurements per year
+#------------------------------
+dtab_yr <- d3 %>%
+  group_by(year) %>%
+  summarize(ndbs = sum(!is.na(sea_pos)),
+            seapos = sum(sea_pos),
+            nkk = sum(!is.na(kk_pos)),
+            kkpos = sum(kk_pos, na.rm =TRUE),
+            .groups = "keep") %>%
+  mutate(seaprev = sprintf("%1.0f", seapos / ndbs * 100),
+         kkprev =  sprintf("%1.0f", kkpos/nkk * 100),
+         desc = as.character(year)
+  ) 
+
+#------------------------------
+# measurements by age group
+#------------------------------
+dtab_age <- d3 %>%
+  group_by(agecat) %>%
+  summarize(ndbs = sum(!is.na(sea_pos)),
+            seapos = sum(sea_pos),
+            nkk = sum(!is.na(kk_pos)),
+            kkpos = sum(kk_pos, na.rm =TRUE),
+            .groups = "keep") %>%
+  mutate(seaprev = sprintf("%1.0f", seapos / ndbs * 100),
+         kkprev =  sprintf("%1.0f", kkpos/nkk * 100),
+         desc = as.character(agecat)
+  ) 
+
+#------------------------------
+# total number of measurements
+#------------------------------
+dtab_tot <- d3 %>%
+  summarize(ndbs = sum(!is.na(sea_pos)),
+            seapos = sum(sea_pos),
+            nkk = sum(!is.na(kk_pos)),
+            kkpos = sum(kk_pos, na.rm =TRUE),
+            .groups = "keep") %>%
+  mutate(seaprev = sprintf("%1.0f", seapos / ndbs * 100),
+         kkprev =  sprintf("%1.0f", kkpos/nkk * 100),
+         desc = "Overall"
+  ) 
+
+dtab_all <- bind_rows(dtab_tot,dtab_age, dtab_yr) %>%
+  dplyr::select(desc,ndbs,seapos,seaprev,nkk,kkpos,kkprev)
+```
+
+
+```{r summary table}
+#------------------------------
+# print an HTML summary table
+#------------------------------
+knitr::kable(dtab_all,digits=0,
+             format.args = list(big.mark = ","),
+             escape=FALSE,
+             caption="Table 1. Number of samples tested and prevalence, stratified by age and by year.",
+             col.names=c("","N<br>Samples","N<br>Positive","(%)","N<br>Samples","N<br>Positive","(%)")) %>%
+  kable_styling(bootstrap_options = c("striped","condensed"),full_width = TRUE) %>%
+  add_header_above(c(" " = 1, "SEA Seroprevalence" = 3, "Kato-Katz Prevalence" = 3)) %>%
+  group_rows("", 1,1) %>%
+  group_rows("Age (years completed)", 2,7) %>%
+  group_rows("Year", 8,10)
+
+```
+
+
+
+# Session Info
+```{r session info}
+sessionInfo()
+```

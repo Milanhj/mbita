@@ -1,0 +1,26 @@
+
+Codebook for
+mbita_schisto.csv / .rds
+
+
+This file includes 3,663 observations and 12 variables. 
+
+Each observation corresponds to a measurement on a single child. The data are in long format by study year (year) and village (vid). 
+
+All of the IgG antibody responses to SEA and Sm25 are in units of median florescence intensity minus background (MFI-bg) and were measured in a multiplex bead assay on a BioPlex 200 Luminex machine at KEMRI.  Note that there are 237 children with serology results but no Kato-Katz stool results.
+
+
+For details about the study design and measurement methods, please refer to this related article:
+
+Won KY, Kanyi HM, Mwende FM, Wiegand RE, Goodhew EB, Priest JW, et al. Multiplex Serologic Assessment of Schistosomiasis in Western Kenya: Antibody Responses in Preschool Aged Children as a Measure of Reduced Transmission. Am J Trop Med Hyg. 2017;96: 1460–1467. https://www.ncbi.nlm.nih.gov/pubmed/28719280
+
+
+Below is a brief description of the variables in this file. 
+
+> str(mbita_schisto)
+'data.frame':	3663 obs. of  12 variables: $ year    : num  2012 2012 2012 2012 2012 ... $ vid     : int  1 1 1 1 1 1 1 1 1 1 ... $ arm     : Factor w/ 2 levels "CWT","SBT": 1 1 1 1 1 1 1 1 1 1 ... $ pid     : chr  "1" "2" "3" "4" ... $ agey    : num  1.81 2.17 2.95 2.63 2.54 ... $ sex     : Factor w/ 2 levels "male","female": 1 2 2 2 1 1 1 2 1 2 ... $ sea     : num  3136 25605 28549 87 26537 ... $ sm25    : num  -2 1344 520 -4 1 ... $ sm_epg  : int  12 12 0 36 24 132 0 48 132 0 ... $ sea_pos : num  1 1 1 0 1 1 1 1 1 1 ... $ sm25_pos: num  0 1 1 0 0 0 0 0 0 0 ... $ kk_pos  : num  1 1 0 1 1 1 0 1 1 0 ...
+
+
+ $ year    : study year, equal to 2012, 2013, or 2014 $ vid     : village ID (1 to 30) for each of the study communities $ arm     : study arm for the original randomized trial. CWT: community-wide treatment; SBT: school-based treatment $ pid     : individual child ID 1 to 3,663 $ agey    : child age in years $ sex     : child sex (male, female) $ sea     : Luminex reponse in MFI-bg to S. mansoni soluble egg antigen (SEA) $ sm25    : Luminex reponse in MFI-bg to S. mansoni Sm25 recombinant antigen $ sm_epg  : Kato-Katz dual slide S. mansoni eggs per gram of stool $ sea_pos : seropositive by SEA. Cutoff determined by ROC analysis, equal to 965 MFI-bg; sens: sensitivity = 97.5%, specificity = 100% $ sm25_pos: seropositive by SEA. Cutoff determined by ROC analysis, equal to 38 MFI-bg; sensitivity = 93.5%, specificity = 97.3% $ kk_pos  : Kato-Katz positive for S. mansoni, equal to 1 if sm_epg > 0
+
+

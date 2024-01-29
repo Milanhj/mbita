@@ -1,0 +1,510 @@
+---
+title: "Data Analysis Assessment"
+author: "Milan Hilde-Jones"
+format:
+  html:
+    
+    toc: true
+    embed-resources: true
+    code-fold: true
+    link-external-newwindow: true
+execute:
+  
+  warning: false
+editor_options: 
+  chunk_output_type: console
+---
+
+## Load Data
+
+```{r}
+#| label: load-data-package
+#| code-fold: show
+
+#packages
+library(tidyverse) # data wrangling and visualization
+library(patchwork) # formatting plots
+library(stats) # model building and selection (glm)
+library(table1) # format base characteristics 
+library(sjPlot) # format regression results
+library(sjmisc)
+library(sjlabelled)
+library(kableExtra)
+
+
+# data
+mbita_schisto <- read_rds("provided_files_data/mbita_schisto.rds")
+mbita_spatial <- read_rds("provided_files_data/mbita_spatial.rds")
+
+```
+
+
+
+
+## Description
+
+
+### Schistosomiasis Data
+
+`mbita_schisto` consists of 3663 observations and 12 variables (9 numeric, 2 factor, and 1 character). Data were collected in 2012, 2013, and 2014. The study measured 1120 individuals at baseline, followed by 1187 in 2013, and 1356 in 2014. Mean age at time of measurement was 3.38 years, youngest age at time of measurement is 0.21 years, and oldest age at time of measurement is 5.55 years. 
+
+There are two identifier variables, `pid` and `vid`, representing child id and village id. `arm` is a factor with two levels (community-wide treatment, n = 1826; and school-based treatment, n = 1837). This variable describes the original arm of the study: community-wide treatment (CWT) versus school-based treatment (SBT). The sex of each child is listed under `sex`, with 1904 females and 1759 males.
+
+`sm_epg` and `kk_pos` are both missing 237 values. These missing values occur in all three years, with missing data from 48 individuals in 2012, 15 in 2013, and 174 in 2014. 
+
+
+```{r}
+#| label: hist-ext-values 
+
+# sm25
+p1 <- ggplot(mbita_schisto) +
+  geom_histogram(aes(sm25), fill = "purple") +
+  theme_minimal()
+
+# sm_epg
+p2 <- ggplot(mbita_schisto) +
+  geom_histogram(aes(sm_epg), fill = "purple") +
+  labs(y = NULL) +
+  theme_minimal()
+
+p1 + p2
+
+```
+
+
+There are isolated extreme values in `sm25` and `sm_epg` that could impact results and might be explored as potential outliers. 
+
+```{r}
+p3 <- ggplot(mbita_schisto) +
+  geom_histogram(aes(sea_pos), fill = "cornflowerblue") +
+  labs(y = NULL) +
+  theme_minimal()
+
+p4 <- ggplot(mbita_schisto) +
+  geom_histogram(aes(sm25_pos), fill = "cornflowerblue") +
+  labs(y = NULL) +
+  theme_minimal()
+
+p5 <- ggplot(mbita_schisto) +
+  labs(y = NULL) +
+  geom_histogram(aes(kk_pos), fill = "cornflowerblue") +
+  theme_minimal()
+
+
+p6 <- ggplot(mbita_schisto) +
+  geom_histogram(aes(year), fill = "cornflowerblue") +
+  labs(y = NULL) +
+  theme_minimal()
+
+
+
+
+p3 + p4 + p5 + p6
+```
+
+
+As shown above, `sea_pos`, `sm25_pos`, `kk_pos`, and `year` contain only discrete values and should be converted into factors. 
+
+<br>
+
+### Spatial Data
+
+```{r}
+#| label: skim-spatial
+#| code-fold: show
+
+# represents units var type as character
+skimr::skim_without_charts(mbita_spatial)
+
+# vis dist_victoria seperately
+
+# mean distance from lake victoria
+mean(mbita_spatial$dist_victoria)
+
+# max distance from lake victoria
+max(mbita_spatial$dist_victoria)
+
+# min distance from lake victoria
+min(mbita_spatial$dist_victoria)
+```
+
+
+`mbita_spatial` contains 30 observations and 5 variables. The unique identifier variable is `vid` (village id). 
+
+
+```{r}
+#| label: hist-ext-value
+#| code-fold: show
+
+# distance distribution
+ggplot(mbita_spatial) +
+  geom_histogram(aes(dist_victoria), fill = "purple") +
+  theme_minimal()
+
+
+# top 5 highest elevation
+mbita_spatial %>% 
+  select(vid, elev) %>% 
+  arrange(desc(elev)) %>% 
+  head(n = 5)
+
+
+# top 5 furthest
+mbita_spatial %>% 
+  select(vid, dist_victoria) %>% 
+  filter(dist_victoria[,1] > 2500) %>% 
+  arrange(desc(dist_victoria[,1]))
+
+
+```
+
+
+There don't seem to be extreme values in `elev`, `tmin`, or `prec`. Village 23 is furthest from Lake Victoria (4718 vs. the mean at 1187 and second furthest at 3309). This village is also at the highest elevation (1338). 
+
+`tmin` reflects the average minimum temperature in each village, ranging from 149-161 (units not listed in codebook). A temperature within this range does not make sense on any of the three common scales. However, an average minimum temperature between 14.9 and 16.1°C is reasonable, so I scaled values to fit within this range.  
+
+
+
+## Data Processing
+
+The following code chunk factors `sea_pos`, `sm25_pos`, `kk_pos`, `year`, and `vid`, re-scales `tmin`, and joins `mbita_schisto` with `mbita_spatial`. It also re-levels `arm` to code SBT as the first (reference) level.
+
+```{r}
+#| label: factor 
+#| code-fold: show
+
+# turn sea_pos, sm25_pos, kk_pos, year, vid into factors
+mbita_schisto_factor <- mbita_schisto %>% 
+  mutate(sea_pos = factor(sea_pos, levels = c(0, 1)),
+         sm25_pos = factor(sm25_pos, levels = c(0, 1)),
+         kk_pos = factor(kk_pos, levels = c(0, 1)),
+         year = factor(year, levels = c(2012, 2013, 2014)),
+         vid = factor(vid, levels = 1:30),
+         # relevel so reference group is SBT
+         arm = relevel(arm, "SBT")
+         )
+
+# factor vid, scale tmin
+mbita_spatial_factor <- mbita_spatial %>% 
+  mutate(vid = factor(vid, levels = 1:30),
+         # assume that tmin is coded wrong bc 150-160 doesn't make sense on F, C, or K
+         # divide by 10 to make more sense in deg Celcius
+         tmin = tmin/10
+         )
+
+# join datasets
+joined_data <- left_join(mbita_schisto_factor, mbita_spatial_factor, by = "vid")
+
+```
+
+
+<br>
+
+## Baseline Characteristics
+
+
+```{r}
+#| label: table-1 
+
+# variable labels
+label(joined_data$year)    <- "Year"
+label(joined_data$agey)   <- "Age"
+label(joined_data$sex)   <- "Sex"
+label(joined_data$sea) <- "SEA"
+label(joined_data$sm25) <- "Sm25"
+label(joined_data$sm_epg) <- "Sm EPG"
+label(joined_data$sea_pos) <- "SEA positive"
+label(joined_data$sm25_pos) <- "Sm25 positive"
+label(joined_data$kk_pos) <- "Kato-Katz positive"
+label(joined_data$elev) <- "Elevation"
+label(joined_data$tmin) <- "Average minimum temperature"
+label(joined_data$prec) <- "Average precipitation"
+label(joined_data$dist_victoria) <- "Distance to lake Victoria"
+
+# take out default units (m) for "Distance"
+units(joined_data$dist_victoria) <- NULL
+
+# title of table
+title <- "Baseline Characteristics"
+
+# table
+table1(~ year + agey + sex + sea + sm25 + 
+         sm_epg + sea_pos + sm25_pos + kk_pos +
+         elev + tmin + prec + dist_victoria | 
+         arm, data = joined_data, caption = title, overall = F)
+
+```
+
+<br>
+
+
+The total number of samples for SBT and CWT are approximately the same. The quantity of SBT samples are more balanced across years in comparison to CWT. The most noticeable imbalance between CWT and SBT observations is between 2013 and 2014, which does not affect the present analysis as post-treatment results are combined across years. The distributions of both sex and age are well balanced across treatment groups. 
+
+Median `sea` is quite different between the two groups, with median sea for CWT equal to 228 and median sea for SBT equal to 4330. Mean `sea` is more similar at 10800 and 13200 for CWT and SBT respectively. The range of `sea` values is similar between trial group. This all suggests that CWT communities have a greater density of observations at the lower end of the range than SBT communities do, despite their standard deviations being similar. Mean `sm25` for CWT is lower than mean `sm25` for SBT. Standard deviation for `sm25` CWT (1020) is much larger than SBT (510), suggesting that the CWT sm25 data have greater spread. Mean and standard deviation for `smEPG` are both lower for CWT. The maximum value for SBT `smEPG` (5000) is much larger than the max for CWT (1930). 
+
+There are more SEA, Sm25, and Kato-Katz positive responses for the SBT trials, but the factor percentages are well balanced. Discrete values for these variables are determined by a positivity threshold, which helps even out the differences observed in `sea`, `sm25`, and `smEPG`.
+
+Spatial data (`elev`, `prec`, `tmin`,`dist_victoria`) look well balanced across trial groups. 
+
+
+
+<br>
+
+## Compare _S._ _mansoni_ Seroprevalence
+
+Analysis was conducted with binomial logistic regression. Models compare the difference in prevalence ratio between villages that received community-wide treatment (CWT) versus school-based treatment (SBT). CWT was treated as the intervention group and SBT as the comparison group.    
+
+Prevalence was analyzed at the community level with the ratio of positive responses to total observations from 2013 and 2014 for each village. Model selection was performed separately for the soluble egg antigen (SEA) and recombinant antigenSm25 (Sm25) based tests. 
+
+
+
+```{r}
+#| label: calc-prev 
+
+model_data <- joined_data %>%
+  group_by(vid) %>%
+  # seperate values from 2012 and 13+14
+  mutate(sea_2012 = if_else(year == 2012, sea_pos, NA), 
+         sm25_2012 = if_else(year == 2012, sm25_pos, NA),
+         # seperate test values from 2013
+         sea_2013 = if_else(year == 2013, sea_pos, NA),
+         sm25_2013 = if_else(year == 2013, sm25_pos, NA),
+         # seperate test values from 2014
+         sea_2014 = if_else(year == 2014, sea_pos, NA),
+         sm25_2014 = if_else(year == 2014, sm25_pos, NA),
+         # combined 13/14 results
+         sea_2013_14 = if_else(year != 2012, sea_pos, NA),
+         sm25_2013_14 = if_else(year != 2012, sm25_pos, NA),
+         
+         # want the ratio positive/total in 2013 and 2014 combined
+         # need to find total obs for each year bc its different
+         # counts sea
+         sea_2012_count = sum(sea_2012 == "1" | sea_2012 == "0", na.rm=T),
+         sea_2013_count = sum(sea_2013 == "1" | sea_2013 == "0", na.rm=T),
+         sea_2014_count = sum(sea_2014 == "1" | sea_2014 == "0", na.rm=T),
+         # counts sm24
+         sm25_2012_count = sum(sm25_2012 == "1" | sm25_2012 == "0", na.rm=T),
+         sm25_2013_count = sum(sm25_2013 == "1" | sm25_2013 == "0", na.rm=T),
+         sm25_2014_count = sum(sm25_2014 == "1" | sm25_2014 == "0", na.rm=T),
+         # total count obs in village
+         # no NA in either sea or sm25 so will have the same total counts 
+         total_obs_2013_14 = sea_2013_count + sea_2014_count,
+         
+         # ratio positive/total in 2012
+         sea_prop_2012 = sum(sea_2012 == "1", na.rm=T) / sea_2012_count,
+         sm25_prop_2012 = sum(sm25_2012 == "1", na.rm=T) / sm25_2012_count,
+         
+         # combined proportion positives in 2013+14
+         sea_avg_2013_14 = sum(sea_2013_14 == "1", na.rm=T) / total_obs_2013_14,
+         sm25_avg_2013_14 = sum(sm25_2013_14 == "1", na.rm=T) / total_obs_2013_14,
+
+         # compute avg village age
+         avg_age = mean(agey),
+         # m:f sex ratio of village
+         sex_perc = sum(sex == "male", na.rm=T) / n(),
+         # create a new temporary id variable for obs within each village
+         temp_id = row_number()
+  )%>%
+  # remove all the extra variables I wont use in models
+  select(-sea_2012, -sm25_2012, -sea_2013, -sm25_2013, -sea_2014, -sm25_2014,
+         -sea_2013_14, -sm25_2013_14, -sea_2012_count, -sea_2013_count, -sea_2014_count,
+         -sm25_2012_count, -sm25_2013_count, -sm25_2014_count,
+         -sea, -sm25, -sm_epg, -sea_pos, -sm25_pos, -kk_pos, 
+         -pid, -agey, -sex, -year
+         ) %>%
+  # filter out all extraneous rows (all row w/in each village have same values)
+  filter(temp_id == 1) %>%
+  # now can remove temp id too
+  select(-temp_id) %>%
+  # ungroup
+  ungroup(vid)
+
+```
+
+
+The SEA model accounted for the proportion of baseline positive SEA responses (from 2012), as well as the average minimum temperature, average precipitation, elevation, distance to Lake Victoria, average age, and male:female sex ratio for each village. 
+
+The Sm25 model also accounted for the proportion of baseline positive Sm25 responses, as well as the average age, average minimum temperature, average precipitation, elevation, distance to Lake Victoria, average age, and male:female sex ratio for each village.
+
+Final model selection was done using Akaike's Information Criterion (AIC) to compare 6 different recipes for both SEA and Sm25 based models.
+
+
+```{r}
+#| label: final-model 
+
+# sea model (kitchen sink)
+sea_final_model <- glm(sea_avg_2013_14 ~ arm + sea_prop_2012 + tmin + prec + 
+                         dist_victoria + avg_age + elev + sex_perc,
+                       data = model_data, 
+                       family = binomial,
+                       weights = total_obs_2013_14
+)
+
+# sm25 model (kitchen sink)
+sm25_final_model <-  glm(sm25_avg_2013_14 ~ arm + sm25_prop_2012 + tmin + prec +
+                           dist_victoria + avg_age + elev + sex_perc,
+                         data = model_data, 
+                         family = binomial,
+                         weights = total_obs_2013_14
+)
+
+
+# Build formatted results table
+
+# define labels
+pred_labels <- c("arm CWT", "SEA prevalence ratio in 2012", 
+                 "Average minimum temperature", "Average precipitation", 
+                 "Distance to lake Victoria", "Average age", "Elevation",
+                 "Sex ratio (male:female)", "Sm25 prevalence ratio in 2012")
+
+dv_labels <- c("SEA", "Sm25" )
+
+
+# build table
+tab_model(sea_final_model, sm25_final_model,
+          title = "Regression Results",
+          show.intercept = FALSE,
+          pred.labels = pred_labels,
+          dv.labels = dv_labels,
+          string.est = "Odds Ratio",
+          string.ci = "95% CI")
+
+
+```
+
+
+### Discussion
+
+`arm` was treated as an indicator variable with SBT as the reference group. Thus, the estimate for armCWT represents the average difference in CWT compared to SBT, after accounting for other variables. 
+
+There is no significant difference in prevalence between SBT and CWT groups for either model at a p<0.05 level. Results provide little evidence that CWT influences the likelihood of a positive SEA or Sm25 response relative to SBT across the post-treatment period. 
+
+<br>
+
+## Permutation Tests 
+
+
+```{r}
+#| label: perm-test 
+
+# SEA ----------------------------------------------------------------------------------------
+
+# calculate difference in means of observed data
+orig_diff_sea <- mean(model_data$sea_avg_2013_14[model_data$arm == "CWT"]) - 
+  mean(model_data$sea_avg_2013_14[model_data$arm == "SBT"]) 
+
+
+# number of observations
+n <- length(model_data$arm)
+# number of permutation samples
+p <- 10000
+# outcome variable of interest
+outcome_sea <- model_data$sea_avg_2013_14
+
+
+# create matrix to hold permutation sets
+p_samples_sea  <- matrix(0, nrow = n, ncol = p)
+
+
+# for loop to iterate through and fill matrix 
+set.seed(3013)
+for (i in 1:p) {
+  # replace 0s in column i w/ samples
+  p_samples_sea[,i] <- sample(outcome_sea, size = n, replace = FALSE)
+}
+
+
+# vector to store difference in means for each permutation set
+test_stats_sea <- rep(0, 10000)
+
+# calculate test stats for each and store
+for(i in 1:p) {
+  # abs value of diff btwn SBT and CWT means for each permutation 
+  test_stats_sea[i] <-
+    mean(p_samples_sea[model_data$arm =="SBT", i]) - mean(p_samples_sea[model_data$arm=="CWT", i])
+}
+
+# calculate p-value
+p_sea <- mean(abs(test_stats_sea) >= abs(orig_diff_sea)) # 0.3882
+
+
+
+# Sm25 ----------------------------------------------------------------------------------------
+
+
+orig_diff_sm25 <- mean(model_data$sm25_avg_2013_14[model_data$arm == "CWT"]) - 
+  mean(model_data$sm25_avg_2013_14[model_data$arm == "SBT"]) 
+
+
+
+# number of observations
+n <- length(model_data$arm)
+# number of permutation samples
+p <- 10000
+# outcome variable of interest
+outcome_sm25 <- model_data$sm25_avg_2013_14
+
+
+# matrix to hold permutation sets
+p_samples_sm25  <- matrix(0, nrow = n, ncol = p)
+
+
+set.seed(3013)
+for (i in 1:p) {
+  p_samples_sm25[,i] <- sample(outcome_sm25, size = n, replace = FALSE)
+}
+
+
+
+# vector to store for each permutation
+test_stats_sm25 <- rep(0, 10000)
+
+# calculate difference in means for each and store
+for(i in 1:p) {
+  test_stats_sm25[i] <-
+    mean(p_samples_sm25[model_data$arm =="SBT", i]) - 
+    mean(p_samples_sm25[model_data$arm=="CWT", i])
+}
+
+# calculate p
+p_sm25 <- mean(abs(test_stats_sm25) >= abs(orig_diff_sm25)) # 0.8214
+
+
+# format results in a tibble
+tibble(
+  "Test type" = c("SEA", "Sm25"),
+  "Permutation P-value" = c(p_sea, p_sm25)
+) %>% 
+  kbl() %>% 
+  kable_styling()
+
+
+
+```
+
+
+```{r}
+#| label: plot-perm-distributions 
+
+
+# plot distributions
+
+hist(test_stats_sea, breaks = 30, col='grey', las = 1, 
+     main = "SEA Mean Difference Distribution", xlab = '')
+abline(v = orig_diff_sea, col="red")
+
+
+hist(test_stats_sm25, breaks = 30, col='grey', las = 1, 
+     main = "Sm25 Mean Difference Distribution", xlab = '')
+abline(v = orig_diff_sm25, col="red")
+
+
+
+```
+
+Permutation tests for both SEA and Sm25 were run with 10,000 samples without replacement. Similar to the logistic regression models, neither permutation test yields significant results. We fail to reject the null hypothesis that there is no difference in the mean prevalence ratio for either treatment group across the post-treatment period (SEA p=0.3732; Sm25 p=0.8203). Thus, neither set of tests provide significant evidence for a difference in the effect of CWT versus SBT on prevalence ratio after 2 years.
+
+
+
+
+

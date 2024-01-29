@@ -1,0 +1,35 @@
+
+Codebook for
+mbita_spatial.csv / .rds
+
+
+This file includes 30 observations and 5 variables. 
+
+Each observation corresponds to a single village (vid). This file includes spatially joined measurements from remotely sensed datasets. Spatial data were joined using village centroids. The lon/lat coordinates of the villages are not included in this file to protect confidentiality. 
+
+This file was created with this notebook, which extracts most of the layers using 
+R's raster package:
+https://github.com/ben-arnold/mbita-schisto/blob/master/R/Fig1-FigS1-FigS5-mbita-schisto-map.Rmd
+
+The global surface water layer was accessed through Google EE using this script:
+
+https://github.com/ben-arnold/mbita-schisto/blob/master/R/mbita-schisto-gsw-google-ee.js
+
+Neither script can be run without the lon/lat coordinates of the villages.
+If you need village lon/lat coordinates, please contact Ben Arnold at UCSF (ben.arnold@ucsf.edu). Sharing that information will probably require IRB coverage and a data sharing agreement.
+
+
+For details about the study design and measurement methods, please refer to this related article:
+
+Won KY, Kanyi HM, Mwende FM, Wiegand RE, Goodhew EB, Priest JW, et al. Multiplex Serologic Assessment of Schistosomiasis in Western Kenya: Antibody Responses in Preschool Aged Children as a Measure of Reduced Transmission. Am J Trop Med Hyg. 2017;96: 1460–1467. https://www.ncbi.nlm.nih.gov/pubmed/28719280
+
+
+Below is a brief description of the variables in this file. 
+
+> str(mbita_spatial)
+Classes ‘tbl_df’, ‘tbl’ and 'data.frame':	30 obs. of  5 variables: $ vid          : int  1 2 3 4 5 6 7 8 9 10 ... $ elev         : num  1189 1184 1177 1139 1157 ... $ tmin         : num  161 159 160 161 160 ... $ prec         : num  82.7 83.8 82.7 82.8 83.6 ... $ dist_victoria: 'units' num [1:30, 1] 568 1292 713 234 219 ...
+
+Descriptions: $ vid          : village ID (1 to 30) for each of the study communities $ elev         : village elevation in meters from SRTM mission $ tmin         : village average minimum temperature from WorldClim $ prec         : village average precipitation from WorldClim $ dist_victoria: village distance to lake Victoria calculated from the global surface water layer, accessed through Google Earth Engine: https://www.nature.com/articles/nature20584
+
+
+

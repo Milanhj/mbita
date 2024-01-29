@@ -1,0 +1,187 @@
+---
+title: "Fine-scale heterogeneity in Schistosoma mansoni force of infection measured through antibody response"
+subtitle: "Figure S1, S. mansoni SEA and Sm25 antibody distributions"
+author: "Ben Arnold ben.arnold@ucsf.edu"
+date: "run `r Sys.time()`"
+output: 
+  html_document:
+    highlight: haddock
+    theme: default
+    code_folding: hide
+    df_print: paged
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+---
+
+
+# Preamble
+```{r preamble}
+library(here)
+here()
+#--------------------------------
+# source the configuration file
+#--------------------------------
+source(here("R/mbita-schisto-Config.R"))
+```
+
+
+# Load and process data
+```{r load data,message=FALSE,warning=FALSE}
+
+
+#---------------------------
+# mbita PSAC data
+#---------------------------
+d <- readRDS(here("data","mbita_schisto.rds") )
+
+
+#---------------------------
+# log-transform the MFI
+# values
+# set values at or below 0
+# to missing before the 
+# transform
+#---------------------------
+d2 <- d %>%
+  mutate(logsea = ifelse(sea <=0, NA, log10(sea)),
+         logsm25 = ifelse(sm25 <= 1, NA, log10(sm25)))
+
+#---------------------------
+# pivot the data longer to
+# make it easier to plot
+#---------------------------
+
+d3 <- d2 %>%
+  dplyr::select(year,vid,pid,agey,logsea,logsm25) %>%
+  pivot_longer(cols = c(logsea,logsm25), names_to = "antigen", names_prefix = "log", values_to = "logmfi") %>%
+  mutate(antigenf = case_when(
+    antigen == "sea" ~ "SEA",
+    antigen == "sm25" ~ "Sm25"
+  ), 
+  antigenf = factor(antigenf,levels = c("SEA","Sm25"))
+  )
+#---------------------------
+# store SEA and Sm25 ROC cutoffs
+# these cutoffs were provided
+# by Kim Won in the file
+# Mbita cutoff table for Ben.xlsx
+#---------------------------
+dcuts <- data.frame(antigenf = c("SEA","Sm25"), cutroc = c(log10(965), log10(38) ))
+
+
+```
+
+# Figure S1
+
+## MFI by age
+
+```{r mfi by age, warning= FALSE}
+
+pcols <- c(vircols[3],cbPalette[2])
+log10labs <- c( 
+  expression(10^0),
+  expression(10^1),
+  expression(10^2),
+  expression(10^3),
+  expression(10^4)
+)
+
+pmfiage <- ggplot(data = d3, aes(x = agey, y = logmfi, color = antigenf)) +
+  facet_grid(antigenf~.) +
+  geom_point(size = 0.5, alpha = 0.3) +
+  geom_hline(data = dcuts, aes(yintercept = cutroc),lwd = 0.25,col = "gray20") +
+  # geom_smooth(method = "loess", se = FALSE, lwd = 0.5, color = "gray20") +
+  scale_color_manual(values = pcols) +
+  scale_y_continuous(breaks = 0:4, labels = log10labs) +
+  labs(x = "age, years", y = "Luminex response (MFI-bg)", tag = "A") +
+  coord_cartesian(ylim = c(0,4.5)) +
+  theme(
+    legend.position = "none",
+    strip.text.y = element_blank()
+  )
+
+
+```
+
+## Antibody level distributions
+
+```{r mfi distributions, warning= FALSE}
+pcols <- c(vircols[3],cbPalette[2])
+log10labs <- c( 
+  expression(10^0),
+  expression(10^1),
+  expression(10^2),
+  expression(10^3),
+  expression(10^4)
+)
+
+nobs <- length(d3$logmfi[d3$antigen=="sea"])
+hbreaks <- seq(0,4.6,by=0.05)
+pmfidist <- ggplot(data = d3, aes(x = logmfi, color = antigenf, fill = antigenf)) +
+  facet_grid(antigenf~.) +
+  # geom_line(stat = "density") +
+  geom_histogram(aes(x = logmfi), breaks = hbreaks, color = NA, alpha = 0.8)+
+  geom_vline(data = dcuts, aes(xintercept = cutroc),lwd = 0.25,col = "gray20") +
+  scale_color_manual(values = pcols) +
+  scale_fill_manual(values = pcols) +
+  scale_x_continuous(breaks = 0:4, labels = log10labs) +
+  scale_y_continuous(expand = c(0,0), breaks = seq(0,700,by=100))+
+  labs(x = NULL, y = "N observations", tag = "B") +
+  coord_flip(ylim = c(0,700), xlim = c(0,4.5))+
+  theme(
+    legend.position = "none", 
+    strip.text.y = element_text(angle = 0)
+  )
+
+
+```
+
+## Combined figure
+
+```{r combined figure, warning= FALSE}
+pcomp <- grid.arrange(pmfiage,pmfidist,nrow = 1, ncol =2)
+
+ggsave(here("output","mbita-schisto-ab-distributions.png"),pcomp,device = "png")
+```
+
+## Extra: plot age-dependent mean and seroprevalence
+
+Sm25 is not included in the main analyses, but examine age-dependent mean and seroprevalence for completeness. Simply use `ggplot`'s internal smoother (no 95% CIs because it does not account for clustering on village).
+```{r plot age dependent means}
+plot_age_means <- ggplot(data=d3, aes(x = agey, y = logmfi, color = antigenf)) + 
+  geom_smooth(se = FALSE) +
+  scale_color_manual(values = pcols, guide=guide_legend(title = "Antigen")) +
+  scale_y_continuous(breaks = 0:4, labels = log10labs) +
+  labs(x = "age, years", y = "Luminex response (MFI-bg)", tag = "A") +
+  coord_cartesian(ylim = c(0,4.5)) 
+
+plot_age_means
+
+```
+
+
+```{r plot age dependent seroprevalence}
+d4 <- d3 %>%
+  mutate(serocut = ifelse(antigenf == "SEA",log10(965),log10(38)),
+         seropos = ifelse(logmfi>serocut,1,0)
+         )
+
+plot_age_serop <- ggplot(data=d4, aes(x = agey, y = seropos, color = antigenf)) + 
+  geom_smooth(se = FALSE) +
+  scale_color_manual(values = pcols, guide=guide_legend(title = "Antigen")) +
+  scale_y_continuous(breaks = seq(0,1,by=0.2), labels = sprintf("%1.0f",seq(0,1,by=0.2)*100)) +
+  labs(x = "age, years", y = "Seroprevalence (%)", tag = "B") +
+  coord_cartesian(ylim = c(0,1)) 
+
+plot_age_serop
+```
+
+
+
+# Session Info
+```{r session info}
+sessionInfo()
+```
